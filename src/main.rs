@@ -11,6 +11,7 @@ const WORKSPACE_MAIN_RS: &str = include_str!("../templates/workspace/src/main.rs
 const PROBLEM_MD: &str = include_str!("../templates/problem/problem.md");
 const SAMPLES_README: &str = include_str!("../templates/problem/samples/README.md");
 const REFLECTION_MD: &str = include_str!("../templates/reflection.md");
+const SESSION_YAML: &str = include_str!("../templates/learning/session.yaml");
 
 #[derive(Debug)]
 enum Command {
@@ -150,6 +151,7 @@ where
         problem_dir.join("problem.md"),
         problem_dir.join("samples").join("README.md"),
         learning_dir.join("reflection.md"),
+        learning_dir.join("session.yaml"),
     ];
 
     let existing_paths = [
@@ -160,6 +162,7 @@ where
         files[2].as_path(),
         files[3].as_path(),
         files[4].as_path(),
+        files[5].as_path(),
     ];
     ensure_paths_absent(&existing_paths, problem_id)?;
 
@@ -170,6 +173,7 @@ where
         staging_problem_dir.join("problem.md"),
         staging_problem_dir.join("samples").join("README.md"),
         staging_learning_dir.join("reflection.md"),
+        staging_learning_dir.join("session.yaml"),
     ];
 
     let write_result = (|| {
@@ -185,6 +189,7 @@ where
             &staging_files[4],
             &render_template(REFLECTION_MD, problem_id),
         )?;
+        writer(&staging_files[5], SESSION_YAML)?;
         Ok::<(), HarnessError>(())
     })();
     if let Err(error) = write_result {
@@ -517,8 +522,117 @@ mod tests {
     use std::io::ErrorKind;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     static NEXT_TEMP_ROOT: AtomicUsize = AtomicUsize::new(0);
+
+    struct TemporaryRoot {
+        path: PathBuf,
+    }
+
+    impl TemporaryRoot {
+        fn new(name: &str) -> Self {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock must be after the Unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "competitive-programming-harness-{name}-{}-{timestamp}",
+                std::process::id()
+            ));
+            fs::create_dir(&path).expect("temporary test root should be created");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TemporaryRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn session_path(root: &Path, problem_id: &str) -> PathBuf {
+        root.join("learning").join(problem_id).join("session.yaml")
+    }
+
+    #[test]
+    fn init_creates_initial_hint_session() {
+        let root = TemporaryRoot::new("init-session");
+
+        init_problem(root.path(), "abc001_c").expect("initialization should succeed");
+
+        assert_eq!(
+            fs::read_to_string(session_path(root.path(), "abc001_c"))
+                .expect("session state should be readable"),
+            "hint_level: 0\nsolution_revealed: false\n"
+        );
+    }
+
+    #[test]
+    fn init_preserves_existing_workspace_and_hint_session() {
+        let root = TemporaryRoot::new("preserve-session");
+        let problem_id = "abc001_c";
+
+        init_problem(root.path(), problem_id).expect("initialization should succeed");
+        let files = [
+            root.path().join("problems/abc001_c/Cargo.toml"),
+            root.path().join("problems/abc001_c/src/main.rs"),
+            root.path().join("problems/abc001_c/problem.md"),
+            root.path().join("problems/abc001_c/samples/README.md"),
+            root.path().join("learning/abc001_c/reflection.md"),
+            session_path(root.path(), problem_id),
+        ];
+        let before = files
+            .iter()
+            .map(|path| fs::read(path).expect("initialized file should be readable"))
+            .collect::<Vec<_>>();
+
+        assert!(init_problem(root.path(), problem_id).is_err());
+
+        let after = files
+            .iter()
+            .map(|path| fs::read(path).expect("existing file should remain readable"))
+            .collect::<Vec<_>>();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn hint_session_updates_and_reloads() {
+        let root = TemporaryRoot::new("update-session");
+        let problem_id = "abc001_c";
+        let path = session_path(root.path(), problem_id);
+
+        init_problem(root.path(), problem_id).expect("initialization should succeed");
+        assert_eq!(
+            fs::read_to_string(&path).expect("initial session state should be readable"),
+            "hint_level: 0\nsolution_revealed: false\n"
+        );
+
+        fs::write(&path, "hint_level: 1\nsolution_revealed: false\n")
+            .expect("level 1 session state should be writable");
+        assert_eq!(
+            fs::read_to_string(&path).expect("level 1 session state should be readable"),
+            "hint_level: 1\nsolution_revealed: false\n"
+        );
+
+        fs::write(&path, "hint_level: 2\nsolution_revealed: false\n")
+            .expect("level 2 session state should be writable");
+        assert_eq!(
+            fs::read_to_string(&path).expect("level 2 session state should be readable"),
+            "hint_level: 2\nsolution_revealed: false\n"
+        );
+
+        fs::write(&path, "hint_level: 6\nsolution_revealed: true\n")
+            .expect("revealed session state should be writable");
+        assert_eq!(
+            fs::read_to_string(&path).expect("revealed session state should be readable"),
+            "hint_level: 6\nsolution_revealed: true\n"
+        );
+    }
 
     struct TempRoot {
         path: PathBuf,
@@ -561,6 +675,7 @@ mod tests {
                 .join("samples")
                 .join("README.md"),
             root.join("learning").join(problem_id).join("reflection.md"),
+            root.join("learning").join(problem_id).join("session.yaml"),
         ];
 
         for file in files {
@@ -651,7 +766,7 @@ mod tests {
 
     #[test]
     fn init_problem_rolls_back_file_creation_failures_and_can_retry() {
-        for fail_at in 1_usize..=5 {
+        for fail_at in 1_usize..=6 {
             let root = TempRoot::new();
             let mut writes = 0;
             let result = init_problem_with_writer(&root.path, "abc", |path, contents| {
