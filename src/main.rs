@@ -11,6 +11,7 @@ const WORKSPACE_MAIN_RS: &str = include_str!("../templates/workspace/src/main.rs
 const PROBLEM_MD: &str = include_str!("../templates/problem/problem.md");
 const SAMPLES_README: &str = include_str!("../templates/problem/samples/README.md");
 const REFLECTION_MD: &str = include_str!("../templates/reflection.md");
+const SESSION_YAML: &str = include_str!("../templates/learning/session.yaml");
 
 #[derive(Debug)]
 enum Command {
@@ -128,6 +129,7 @@ fn init_problem(root: &Path, problem_id: &str) -> Result<(), HarnessError> {
         problem_dir.join("problem.md"),
         problem_dir.join("samples").join("README.md"),
         learning_dir.join("reflection.md"),
+        learning_dir.join("session.yaml"),
     ];
 
     if problem_dir.exists() || learning_dir.exists() || files.iter().any(|path| path.exists()) {
@@ -145,6 +147,7 @@ fn init_problem(root: &Path, problem_id: &str) -> Result<(), HarnessError> {
     write_new_file(&files[2], &render_template(PROBLEM_MD, problem_id))?;
     write_new_file(&files[3], SAMPLES_README)?;
     write_new_file(&files[4], &render_template(REFLECTION_MD, problem_id))?;
+    write_new_file(&files[5], SESSION_YAML)?;
 
     println!("initialized local workspace: problems/{problem_id}");
     Ok(())
@@ -324,7 +327,118 @@ fn display_tokens(tokens: &[&[u8]]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_output, validate_problem_id};
+    use super::{init_problem, normalize_output, validate_problem_id};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TemporaryRoot {
+        path: PathBuf,
+    }
+
+    impl TemporaryRoot {
+        fn new(name: &str) -> Self {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock must be after the Unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "competitive-programming-harness-{name}-{}-{timestamp}",
+                std::process::id()
+            ));
+            fs::create_dir(&path).expect("temporary test root should be created");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TemporaryRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn session_path(root: &Path, problem_id: &str) -> PathBuf {
+        root.join("learning").join(problem_id).join("session.yaml")
+    }
+
+    #[test]
+    fn init_creates_initial_hint_session() {
+        let root = TemporaryRoot::new("init-session");
+
+        init_problem(root.path(), "abc001_c").expect("initialization should succeed");
+
+        assert_eq!(
+            fs::read_to_string(session_path(root.path(), "abc001_c"))
+                .expect("session state should be readable"),
+            "hint_level: 0\nsolution_revealed: false\n"
+        );
+    }
+
+    #[test]
+    fn init_preserves_existing_workspace_and_hint_session() {
+        let root = TemporaryRoot::new("preserve-session");
+        let problem_id = "abc001_c";
+
+        init_problem(root.path(), problem_id).expect("initialization should succeed");
+        let files = [
+            root.path().join("problems/abc001_c/Cargo.toml"),
+            root.path().join("problems/abc001_c/src/main.rs"),
+            root.path().join("problems/abc001_c/problem.md"),
+            root.path().join("problems/abc001_c/samples/README.md"),
+            root.path().join("learning/abc001_c/reflection.md"),
+            session_path(root.path(), problem_id),
+        ];
+        let before = files
+            .iter()
+            .map(|path| fs::read(path).expect("initialized file should be readable"))
+            .collect::<Vec<_>>();
+
+        assert!(init_problem(root.path(), problem_id).is_err());
+
+        let after = files
+            .iter()
+            .map(|path| fs::read(path).expect("existing file should remain readable"))
+            .collect::<Vec<_>>();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn hint_session_updates_and_reloads() {
+        let root = TemporaryRoot::new("update-session");
+        let problem_id = "abc001_c";
+        let path = session_path(root.path(), problem_id);
+
+        init_problem(root.path(), problem_id).expect("initialization should succeed");
+        assert_eq!(
+            fs::read_to_string(&path).expect("initial session state should be readable"),
+            "hint_level: 0\nsolution_revealed: false\n"
+        );
+
+        fs::write(&path, "hint_level: 1\nsolution_revealed: false\n")
+            .expect("level 1 session state should be writable");
+        assert_eq!(
+            fs::read_to_string(&path).expect("level 1 session state should be readable"),
+            "hint_level: 1\nsolution_revealed: false\n"
+        );
+
+        fs::write(&path, "hint_level: 2\nsolution_revealed: false\n")
+            .expect("level 2 session state should be writable");
+        assert_eq!(
+            fs::read_to_string(&path).expect("level 2 session state should be readable"),
+            "hint_level: 2\nsolution_revealed: false\n"
+        );
+
+        fs::write(&path, "hint_level: 6\nsolution_revealed: true\n")
+            .expect("revealed session state should be writable");
+        assert_eq!(
+            fs::read_to_string(&path).expect("revealed session state should be readable"),
+            "hint_level: 6\nsolution_revealed: true\n"
+        );
+    }
 
     #[test]
     fn output_comparison_ignores_whitespace() {
