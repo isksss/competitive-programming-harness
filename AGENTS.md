@@ -5,7 +5,8 @@
 - ツールと開発タスクはプロジェクト直下の `mise.toml` で管理する。
 - Rust、Cargo、rustfmtの実行と検証は `mise run` 経由で行う。
 - 問題環境は `mise run init <problem-id>` で作成し、サンプルは `mise run sample <problem-id>` で実行する。
-- 実装完了時の基本検証は `mise run verify` とする。
+- Harness本体の変更後は `mise run verify` を実行する。これはmise定義とHarness本体のformat、unit test、buildだけを検証し、`problems/<id>` のsolutionは検証しない。
+- local solutionの確認は `mise run sample <problem-id>` で行う。これはサンプル検証であり、隠しテストまで保証しない。`verify`単独ではsolutionを検証しない。
 
 ## 学習方針
 
