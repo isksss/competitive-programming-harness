@@ -33,7 +33,7 @@ mise run sample <id>
 sample output comparison
 ```
 
-`cph test` は各 `samples/*.in` を対応する `.out` と比較する。比較は空白区切りトークン単位で行い、末尾空白と改行形式の差を無視する。
+`cph test` は各 `samples/*.in` を対応する `.out` と比較する。比較は行ごとのトークン列で行い、各行内の先頭・末尾・連続する ASCII space/tab、LF と CRLF の違い、最終改行1個の有無を無視する。一方、トークンの行所属・順序・空行位置は一致必須である。これは AtCoder の判定を完全に再現するものではなく、ローカル学習用に出力の行構造を維持して確認する仕様である。
 
 `mise run sample <id>` は `problems/<id>` のlocal solutionをコンパイル・実行し、サンプルを検証する。サンプル検証だけを行うため、隠しテストまで正しさを保証するものではない。`mise run verify` はこのsolutionを検証しない。
 
