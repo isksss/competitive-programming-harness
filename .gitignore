@@ -1,0 +1,6 @@
+/target/
+/problems/
+/learning/
+/generated/
+/mise.local.toml
+.DS_Store

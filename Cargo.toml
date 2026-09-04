@@ -1,0 +1,10 @@
+[package]
+name = "competitive-programming-harness"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A local learning harness for competitive programming and Rust"
+
+[[bin]]
+name = "cph"
+path = "src/main.rs"
