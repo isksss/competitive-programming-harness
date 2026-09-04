@@ -18,6 +18,10 @@ mise run sample abc001_c
 mise run verify
 ```
 
+`mise run sample <problem-id>` は、ローカルsolutionをコンパイル・実行し、サンプル出力と比較するためのコマンドです。サンプル検証だけを行うため、隠しテストまで正しさを保証するものではありません。
+
+`mise run verify` は、mise定義とHarness本体のformat、unit test、buildだけを検証します。`verify`単独では `problems/<id>` のsolutionを検証しません。
+
 利用可能なタスクは `mise tasks` で確認できます。
 
 ## Local-only data
