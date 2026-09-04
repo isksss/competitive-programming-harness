@@ -293,12 +293,14 @@ fn run_sample(
         });
     }
 
-    if normalize_output(&output.stdout) != normalize_output(&expected) {
+    let expected_lines = normalize_output(&expected);
+    let actual_lines = normalize_output(&output.stdout);
+    if actual_lines != expected_lines {
         return Ok(SampleResult::Failed {
             reason: format!(
                 "output mismatch (expected `{}`, got `{}`)",
-                display_tokens(&normalize_output(&expected)),
-                display_tokens(&normalize_output(&output.stdout))
+                display_output(&expected_lines),
+                display_output(&actual_lines)
             ),
             stderr: output.stderr,
         });
@@ -307,36 +309,95 @@ fn run_sample(
     Ok(SampleResult::Passed)
 }
 
-fn normalize_output(output: &[u8]) -> Vec<&[u8]> {
-    output
-        .split(|byte| byte.is_ascii_whitespace())
-        .filter(|token| !token.is_empty())
+fn normalize_output(output: &[u8]) -> Vec<Vec<&[u8]>> {
+    let has_final_newline = output.ends_with(b"\n");
+    let mut lines = output.split(|byte| *byte == b'\n').collect::<Vec<_>>();
+    if has_final_newline {
+        lines.pop();
+    }
+
+    let line_count = lines.len();
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let line = if has_final_newline || index + 1 < line_count {
+                line.strip_suffix(b"\r").unwrap_or(line)
+            } else {
+                line
+            };
+
+            line.split(|byte| *byte == b' ' || *byte == b'\t')
+                .filter(|token| !token.is_empty())
+                .collect()
+        })
         .collect()
 }
 
-fn display_tokens(tokens: &[&[u8]]) -> String {
-    tokens
+fn display_output(lines: &[Vec<&[u8]>]) -> String {
+    lines
         .iter()
-        .map(|token| String::from_utf8_lossy(token).into_owned())
+        .map(|line| {
+            let tokens = line
+                .iter()
+                .map(|token| String::from_utf8_lossy(token).into_owned())
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("[{tokens}]")
+        })
         .collect::<Vec<_>>()
-        .join(" ")
+        .join("\\n")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_output, validate_problem_id};
+    use super::{display_output, normalize_output, validate_problem_id};
 
     #[test]
-    fn output_comparison_ignores_whitespace() {
+    fn output_comparison_accepts_crlf() {
+        assert_eq!(normalize_output(b"1 2\r\n3"), normalize_output(b"1 2\n3"));
+    }
+
+    #[test]
+    fn output_comparison_accepts_trailing_whitespace() {
+        assert_eq!(normalize_output(b"1 2  \n3\t"), normalize_output(b"1 2\n3"));
+    }
+
+    #[test]
+    fn output_comparison_accepts_one_optional_final_newline() {
+        assert_eq!(normalize_output(b"1 2\n3\n"), normalize_output(b"1 2\n3"));
+        assert_ne!(normalize_output(b"1 2\n3\n\n"), normalize_output(b"1 2\n3"));
+    }
+
+    #[test]
+    fn output_comparison_accepts_spaces_and_tabs_within_a_line() {
         assert_eq!(
-            normalize_output(b"1  2\r\n3 \n"),
-            normalize_output(b"1\n2 3")
+            normalize_output(b" \t1  2\t3 \t"),
+            normalize_output(b"1\t2 3")
         );
+    }
+
+    #[test]
+    fn output_comparison_detects_tokens_on_different_lines() {
+        assert_ne!(normalize_output(b"1\n2 3"), normalize_output(b"1 2\n3"));
+    }
+
+    #[test]
+    fn output_comparison_detects_different_blank_line_positions() {
+        assert_ne!(normalize_output(b"1\n\n2"), normalize_output(b"1\n2"));
     }
 
     #[test]
     fn output_comparison_detects_different_tokens() {
         assert_ne!(normalize_output(b"1 2"), normalize_output(b"1 3"));
+    }
+
+    #[test]
+    fn output_display_keeps_line_structure() {
+        assert_eq!(
+            display_output(&normalize_output(b"1\n\n2")),
+            "[1]\\n[]\\n[2]"
+        );
     }
 
     #[test]
